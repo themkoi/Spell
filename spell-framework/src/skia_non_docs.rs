@@ -33,7 +33,7 @@ pub struct SkiaSoftwareBufferReal {
 }
 
 impl SkiaSoftwareBufferReal {
-    fn refresh_buffer(&self, width: i32, height: i32) -> Buffer {
+    pub fn refresh_buffer(&self, width: i32, height: i32) -> Buffer {
         let stride = width as i32 * 4;
         let (buffer, _raw_canvas) = self
             .pool

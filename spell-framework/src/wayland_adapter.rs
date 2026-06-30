@@ -498,6 +498,10 @@ impl SpellWin {
 
     fn converter(&mut self, qh: &QueueHandle<Self>) {
         slint::platform::update_timers_and_animations();
+        let Some(layer_surface) = self.layer.as_ref() else {
+            trace!("Converter skipped: No active layer surface (output may be disconnected).");
+            return;
+        };
         let width: u32 = self.adapter.as_ref().unwrap().size.get().width;
         let height: u32 = self.adapter.as_ref().unwrap().size.get().height;
         let window_adapter = self.adapter.clone();
@@ -643,10 +647,12 @@ impl OutputHandler for SpellWin {
     fn new_output(
         &mut self,
         _conn: &Connection,
-        _qh: &QueueHandle<Self>,
-        _output: wl_output::WlOutput,
+        qh: &QueueHandle<Self>,
+        output: wl_output::WlOutput,
     ) {
-        trace!("New output Source Added");
+        info!("new_output triggered. Checking monitor information...");
+        // Try to handle connection immediately if metadata is already present
+        self.try_recreate_layer_surface(qh, output);
     }
 
     fn update_output(
@@ -655,19 +661,102 @@ impl OutputHandler for SpellWin {
         qh: &QueueHandle<Self>,
         output: wl_output::WlOutput,
     ) {
-        trace!("Existing output is updated");
+        info!("update_output triggered. Checking updated monitor information...");
+        self.try_recreate_layer_surface(qh, output);
+    }
+
+    fn output_destroyed(
+        &mut self,
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+        output: wl_output::WlOutput,
+    ) {
+        info!("Output destroyed. Cleaning up dead layers.");
+
+        if let Some(monitors) = AVAILABLE_MONITORS.get() {
+            if let Ok(mut guard) = monitors.write() {
+                guard.retain(|_, (cached_output, _, _)| cached_output != &output);
+            }
+        }
+
+        if let Some(ref layer_surface) = self.layer {
+            let wl_surf = layer_surface.wl_surface();
+            wl_surf.attach(None, 0, 0);
+            wl_surf.commit();
+        }
+
+        self.layer = None;
+
+        self.first_configure.set(false);
+    }
+}
+
+// Separate helper
+impl SpellWin {
+    fn try_recreate_layer_surface(&mut self, qh: &QueueHandle<Self>, output: wl_output::WlOutput) {
+        if self.layer.is_some() || self.first_configure.get() {
+            trace!("Skipping surface recreation (Initial setup phase or layer already exists).");
+            return;
+        }
 
         if let Some(info) = self.states.output_state.info(&output) {
             if let Some(target_name) = &self.config.monitor_name {
                 if info.name.as_ref() == Some(target_name) {
-                    info!("Target monitor '{}' reconnected. Restoring surface...", target_name);
+                    info!(
+                        "Target monitor '{}' reconnected! Re-creating LayerSurface...",
+                        target_name
+                    );
 
                     if let Some(monitors) = AVAILABLE_MONITORS.get() {
                         if let Ok(mut guard) = monitors.write() {
-                            if let (Some(name), Some(logical_size)) = (info.name.clone(), info.logical_size) {
-                                guard.insert(name, (output.clone(), logical_size.0, logical_size.1));
+                            if let (Some(name), Some(logical_size)) =
+                                (info.name.clone(), info.logical_size)
+                            {
+                                guard
+                                    .insert(name, (output.clone(), logical_size.0, logical_size.1));
                             }
                         }
+                    }
+
+                    if let Some(logical_size) = info.logical_size {
+                        match self.config.width {
+                            Dimension::Pixel(x) => self.config.evaluated_width = x,
+                            Dimension::Full => self.config.evaluated_width = logical_size.0 as u32,
+                            Dimension::Percentage(y) => {
+                                self.config.evaluated_width = (logical_size.0 as u32) / y
+                            }
+                        }
+                        match self.config.height {
+                            Dimension::Pixel(x) => self.config.evaluated_height = x,
+                            Dimension::Full => self.config.evaluated_height = logical_size.1 as u32,
+                            Dimension::Percentage(y) => {
+                                self.config.evaluated_height = (logical_size.1 as u32) / y
+                            }
+                        }
+                    }
+
+                    if let Some(adapter) = &self.adapter {
+                        let new_buffer = adapter.buffer_slint.refresh_buffer(
+                            self.config.evaluated_width as i32,
+                            self.config.evaluated_height as i32,
+                        );
+                        self.buffer = Some(new_buffer);
+
+                        let target_physical_size = slint::PhysicalSize::new(
+                            self.config.evaluated_width,
+                            self.config.evaluated_height,
+                        );
+                        adapter.size.set(target_physical_size);
+
+                        let logical_pos = slint::LogicalSize::new(
+                            self.config.evaluated_width as f32,
+                            self.config.evaluated_height as f32,
+                        );
+                        let _ = adapter.try_dispatch_event(slint::platform::WindowEvent::Resized {
+                            size: logical_pos,
+                        });
+
+                        adapter.request_redraw();
                     }
 
                     let surface = self.states.compositor_state.create_surface(qh);
@@ -679,24 +768,23 @@ impl OutputHandler for SpellWin {
                         Some(&output),
                     );
 
+                    layer.set_size(self.config.evaluated_width, self.config.evaluated_height);
+
+                    set_config(
+                        &self.config,
+                        &layer,
+                        Some(self.input_region.wl_region()),
+                        Some(self.opaque_region.wl_region()),
+                    );
+
                     self.layer = Some(layer);
-                    self.set_config_internal();
                     self.first_configure.set(true);
                     self.layer.as_ref().unwrap().commit();
 
-                    info!("Layer surface successfully remapped onto reconnected output.");
+                    info!("Layer surface successfully rendered onto re-connected target output.");
                 }
             }
         }
-    }
-
-    fn output_destroyed(
-        &mut self,
-        _conn: &Connection,
-        _qh: &QueueHandle<Self>,
-        _output: wl_output::WlOutput,
-    ) {
-        trace!("Output is destroyed");
     }
 }
 
