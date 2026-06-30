@@ -97,6 +97,8 @@ pub(crate) struct States {
     pub(crate) touch_state: Option<WlTouch>,
     pub(crate) shm: Shm,
     pub(crate) viewporter: Option<Viewport>,
+    pub(crate) compositor_state: CompositorState,
+    pub(crate) layer_shell: LayerShell,
 }
 
 /// `SpellWin` is the main type for implementing widgets, it covers various properties and trait
@@ -183,6 +185,8 @@ impl SpellWin {
                 touch_state: None,
                 shm,
                 viewporter: None,
+                compositor_state: compositor,
+                layer_shell,
             },
             layer: None,
             first_configure: Cell::new(true),
@@ -305,7 +309,7 @@ impl SpellWin {
         });
         win.adapter = Some(adapter_value);
         let target_output: Option<&WlOutput> = output_info.as_ref().map(|(a, _, _)| a);
-        let layer = layer_shell.create_layer_surface(
+        let layer = win.states.layer_shell.create_layer_surface(
             &qh,
             surface,
             window_conf.layer_type,
@@ -648,10 +652,42 @@ impl OutputHandler for SpellWin {
     fn update_output(
         &mut self,
         _conn: &Connection,
-        _qh: &QueueHandle<Self>,
-        _output: wl_output::WlOutput,
+        qh: &QueueHandle<Self>,
+        output: wl_output::WlOutput,
     ) {
         trace!("Existing output is updated");
+
+        if let Some(info) = self.states.output_state.info(&output) {
+            if let Some(target_name) = &self.config.monitor_name {
+                if info.name.as_ref() == Some(target_name) {
+                    info!("Target monitor '{}' reconnected. Restoring surface...", target_name);
+
+                    if let Some(monitors) = AVAILABLE_MONITORS.get() {
+                        if let Ok(mut guard) = monitors.write() {
+                            if let (Some(name), Some(logical_size)) = (info.name.clone(), info.logical_size) {
+                                guard.insert(name, (output.clone(), logical_size.0, logical_size.1));
+                            }
+                        }
+                    }
+
+                    let surface = self.states.compositor_state.create_surface(qh);
+                    let layer = self.states.layer_shell.create_layer_surface(
+                        qh,
+                        surface,
+                        self.config.layer_type,
+                        Some(self.layer_name.clone()),
+                        Some(&output),
+                    );
+
+                    self.layer = Some(layer);
+                    self.set_config_internal();
+                    self.first_configure.set(true);
+                    self.layer.as_ref().unwrap().commit();
+
+                    info!("Layer surface successfully remapped onto reconnected output.");
+                }
+            }
+        }
     }
 
     fn output_destroyed(
