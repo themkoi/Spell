@@ -487,13 +487,17 @@ impl SpellWin {
         self.layer.as_ref().unwrap().commit();
     }
 
-    fn set_config_internal(&self) {
-        set_config(
-            &self.config,
-            self.layer.as_ref().unwrap(),
-            Some(self.input_region.wl_region()),
-            Some(self.opaque_region.wl_region()),
-        );
+fn set_config_internal(&self) {
+        if let Some(layer_surface) = self.layer.as_ref() {
+            set_config(
+                &self.config,
+                layer_surface,
+                Some(self.input_region.wl_region()),
+                Some(self.opaque_region.wl_region()),
+            );
+        } else {
+            trace!("set_config_internal skipped: No active layer surface.");
+        }
     }
 
     fn converter(&mut self, qh: &QueueHandle<Self>) {
