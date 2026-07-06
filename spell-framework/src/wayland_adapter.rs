@@ -73,7 +73,7 @@ use std::{
     rc::Rc,
     sync::{Once, OnceLock, RwLock},
 };
-use tracing::{Level, info, span, trace, warn};
+use tracing::{Level, error, info, span, trace, warn};
 pub use widget_impls::lock_impl::SpellSlintLock;
 
 mod fractional_scaling;
