@@ -441,7 +441,11 @@ impl SpellWin {
         );
         self.input_region.add(x, y, width, height);
         self.set_config_internal();
-        self.layer.as_ref().unwrap().commit();
+        if let Some(layer) = self.layer.as_ref() {
+            layer.commit();
+        } else {
+            error!("layer is not initialized");
+        }
     }
 
     /// This function subtracts specific rectangular regions of your complete layer from receiving
@@ -487,7 +491,7 @@ impl SpellWin {
         self.layer.as_ref().unwrap().commit();
     }
 
-fn set_config_internal(&self) {
+    fn set_config_internal(&self) {
         if let Some(layer_surface) = self.layer.as_ref() {
             set_config(
                 &self.config,
