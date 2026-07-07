@@ -459,7 +459,11 @@ impl SpellWin {
         );
         self.input_region.subtract(x, y, width, height);
         self.set_config_internal();
-        self.layer.as_ref().unwrap().commit();
+        if let Some(layer) = self.layer.as_ref() {
+            layer.commit();
+        } else {
+            error!("layer is not initialized");
+        }
     }
 
     /// This function marks specific rectangular regions of your complete layer as opaque.
