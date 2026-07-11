@@ -749,8 +749,8 @@ impl OutputHandler for SpellWin {
 // Separate helper
 impl SpellWin {
     fn try_recreate_layer_surface(&mut self, qh: &QueueHandle<Self>, output: wl_output::WlOutput) {
-        if self.layer.is_some() || self.first_configure.get() {
-            trace!("Skipping surface recreation (Initial setup phase or layer already exists).");
+        if self.layer.is_some() {
+            trace!("Skipping surface recreation: layer already exists.");
             return;
         }
 
@@ -832,9 +832,11 @@ impl SpellWin {
                         Some(self.opaque_region.wl_region()),
                     );
 
-                    self.layer = Some(layer);
                     self.first_configure.set(true);
-                    self.layer.as_ref().unwrap().commit();
+
+                    layer.wl_surface().commit();
+
+                    self.layer = Some(layer);
 
                     info!("Layer surface successfully rendered onto re-connected target output.");
                 }
