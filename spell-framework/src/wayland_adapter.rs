@@ -749,14 +749,8 @@ impl OutputHandler for SpellWin {
 // Separate helper
 impl SpellWin {
     fn try_recreate_layer_surface(&mut self, qh: &QueueHandle<Self>, output: wl_output::WlOutput) {
-        // Only skip if an active layer surface is already up and running.
-        if self.layer.is_some() {
-            trace!("Skipping surface recreation: layer already exists.");
-            return;
-        }
-
-        if AVAILABLE_MONITORS.get().is_none() {
-            trace!("Skipping surface recreation during initial window setup phase.");
+        if self.layer.is_some() || self.first_configure.get() {
+            trace!("Skipping surface recreation (Initial setup phase or layer already exists).");
             return;
         }
 
@@ -807,10 +801,6 @@ impl SpellWin {
                             self.config.evaluated_width,
                             self.config.evaluated_height,
                         );
-                        
-                        // Capture the size before updating to see if Slint was initialized
-                        let old_size = adapter.size.get();
-                        
                         adapter.size.set(target_physical_size);
 
                         let logical_pos = slint::LogicalSize::new(
@@ -821,11 +811,7 @@ impl SpellWin {
                             size: logical_pos,
                         });
 
-                        // SAFETY GUARD: If the window size was 0, the Slint component hasn't 
-                        // been built or attached yet. Skip redraw during the initial startup sequence.
-                        if old_size.width > 0 && old_size.height > 0 {
-                            adapter.request_redraw();
-                        }
+                        adapter.request_redraw();
                     }
 
                     let surface = self.states.compositor_state.create_surface(qh);
@@ -846,14 +832,9 @@ impl SpellWin {
                         Some(self.opaque_region.wl_region()),
                     );
 
-                    // Force the converter rendering logic to flag a clean frame repaint
-                    self.first_configure.set(true);
-                    
-                    // Commit changes to register the surface with the Wayland compositor
-                    layer.wl_surface().commit();
-                    
-                    // Assign the brand new active surface layer back to the window state
                     self.layer = Some(layer);
+                    self.first_configure.set(true);
+                    self.layer.as_ref().unwrap().commit();
 
                     info!("Layer surface successfully rendered onto re-connected target output.");
                 }
