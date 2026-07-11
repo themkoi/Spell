@@ -250,8 +250,16 @@ impl PointerHandler for SpellWin {
             let adapter: &std::rc::Rc<SpellSkiaWinAdapter> =
                 if let Some(popup) = self.popup_manager.return_adapter(&event.surface) {
                     popup
-                } else if &event.surface == self.layer.as_ref().unwrap().wl_surface() {
-                    self.adapter.as_ref().unwrap()
+                } else if self
+                    .layer
+                    .as_ref()
+                    .map_or(false, |l| &event.surface == l.wl_surface())
+                {
+                    if let Some(adapter) = self.adapter.as_ref() {
+                        adapter
+                    } else {
+                        continue;
+                    }
                 } else {
                     continue;
                 };
