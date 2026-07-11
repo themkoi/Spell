@@ -755,6 +755,11 @@ impl SpellWin {
             return;
         }
 
+        if AVAILABLE_MONITORS.get().is_none() {
+            trace!("Skipping surface recreation during initial window setup phase.");
+            return;
+        }
+
         if let Some(info) = self.states.output_state.info(&output) {
             if let Some(target_name) = &self.config.monitor_name {
                 if info.name.as_ref() == Some(target_name) {
