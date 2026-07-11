@@ -126,6 +126,7 @@ pub struct SpellWin {
     pub(crate) opaque_region: Region,
     pub(crate) xdg_shell: XdgShell,
     pub(crate) popup_manager: PopupManager,
+    pub current_output: Option<wl_output::WlOutput>,
     /// Event loop which runs and refreshes UI.
     pub event_loop: Rc<RefCell<EventLoop<'static, SpellWin>>>,
     /// Span required for proper logging.
@@ -202,6 +203,7 @@ impl SpellWin {
             opaque_region,
             xdg_shell,
             popup_manager: PopupManager::new(),
+            current_output: None, // FIX: Initialize as None first since target_output isn't known yet
             event_loop: Rc::new(RefCell::new(event_loop)),
             span: span!(Level::INFO, "widget", name = layer_name.as_str(),),
         };
@@ -298,7 +300,7 @@ impl SpellWin {
             window_conf.evaluated_width,
             window_conf.evaluated_height,
         );
-        // win.popup_manager.set_pool(pool_mut.clone());
+
         win.adapter = Some(adapter_value.clone());
         win.buffer = Some(way_pri_buffer);
 
@@ -315,6 +317,7 @@ impl SpellWin {
             }
         });
         win.adapter = Some(adapter_value);
+
         let target_output: Option<&WlOutput> = output_info.as_ref().map(|(a, _, _)| a);
         let layer = win.states.layer_shell.create_layer_surface(
             &qh,
@@ -327,14 +330,17 @@ impl SpellWin {
         set_config(
             &win.config,
             &layer,
-            //true,
             Some(win.input_region.wl_region()),
             None,
         );
         if let Err(err) = event_queue.roundtrip(&mut win) {
             warn!("Received roundtrip error: {}", err);
         }
+
+        // FIX: Now that the surface and outputs are bound, we safely preserve both handles
         win.layer = Some(layer);
+        win.current_output = target_output.cloned();
+
         let fractional_scale_state: FractionalScaleState =
             FractionalScaleState::bind(&globals, &qh).expect("Fractional Scale couldn't be set");
         let surface: &WlSurface = win.layer.as_ref().unwrap().wl_surface();
@@ -734,15 +740,21 @@ impl OutputHandler for SpellWin {
             }
         }
 
-        if let Some(ref layer_surface) = self.layer {
-            let wl_surf = layer_surface.wl_surface();
-            wl_surf.attach(None, 0, 0);
-            wl_surf.commit();
+        // FIX: Only nuke the layer if it belongs to the output that actually disconnected!
+        if self.current_output.as_ref() == Some(&output) {
+            info!("Target output disconnected. Cleaning up layer surface.");
+            if let Some(ref layer_surface) = self.layer {
+                let wl_surf = layer_surface.wl_surface();
+                wl_surf.attach(None, 0, 0);
+                wl_surf.commit();
+            }
+
+            self.layer = None;
+            self.current_output = None; // Reset the output handle
+            self.first_configure.set(false);
+        } else {
+            trace!("An unrelated output was destroyed. Keeping layer surface intact.");
         }
-
-        self.layer = None;
-
-        self.first_configure.set(false);
     }
 }
 
@@ -832,7 +844,9 @@ impl SpellWin {
                         Some(self.opaque_region.wl_region()),
                     );
 
+                    // FIX: Update both the layer and the current tracked output handle
                     self.layer = Some(layer);
+                    self.current_output = Some(output.clone());
                     self.first_configure.set(true);
                     self.layer.as_ref().unwrap().commit();
 
